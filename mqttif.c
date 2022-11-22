@@ -2,8 +2,6 @@
 extern "C" {
 #endif
 
-#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
-
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -24,6 +22,7 @@ extern "C" {
 #include "event_source.h"
 
 esp_event_loop_handle_t loop_with_task;
+bool _subscribeAllTraffic = false;
 
 static const char *TAG = "MQTTIF";
 
@@ -74,8 +73,7 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event)
             break;
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
-            mqtt_if_subscribe(mqtt_if);
-            //mqtt_if_unsubscribe(mqtt_if);
+            mqtt_if_unsubscribe(mqtt_if);
 
             break;
 
@@ -136,7 +134,7 @@ static void packet_receive_handler(void* handler_args, esp_event_base_t base, in
     if (pb == NULL)
         return;
 
-    ESP_LOGD(TAG, "Buffer received - len: %d tot_len: %d", pb->len, pb->tot_len);
+    ESP_LOGI(TAG, "Buffer received - len: %d tot_len: %d", pb->len, pb->tot_len);
     if (mqtt_if->netif.input(pb, &mqtt_if->netif) != ERR_OK)
     {
         ESP_LOGI(TAG, "input failed");
@@ -147,7 +145,10 @@ static void packet_receive_handler(void* handler_args, esp_event_base_t base, in
 
 static void packet_send_handler(void* handler_args, esp_event_base_t base, int32_t id, void* event_data)
 {
+    //ESP_LOGI(TAG, "Send Handler Called");
     struct mqtt_pub_data *pub_data = *(struct mqtt_pub_data **)event_data;
+    //ESP_LOGI(TAG, "Send Handler Pub Data: %d", pub_data);
+
     if (pub_data == NULL)
         return;
 
@@ -161,10 +162,10 @@ static void packet_send_handler(void* handler_args, esp_event_base_t base, int32
     //printf("End snd: %d\n", xPortGetFreeHeapSize());
 }
 
-struct mqtt_if_data* mqtt_vpn_if_init(char *broker, char *user, char *broker_password, char *topic_pre, char *password, ip4_addr_t ipaddr, ip4_addr_t netmask, ip4_addr_t gw)
+struct mqtt_if_data* mqtt_vpn_if_init(char *broker, char *user, char *broker_password, char *topic_pre, char *password, ip4_addr_t ipaddr, ip4_addr_t netmask, ip4_addr_t gw, bool subscribeAllTraffic)
 {
     ESP_LOGI(TAG, "Init on broker: %s", broker);
-
+    if(subscribeAllTraffic) _subscribeAllTraffic=true;
     esp_mqtt_client_config_t mqtt_cfg = {
         .uri = broker,
         .event_handle = mqtt_event_handler,
@@ -190,7 +191,7 @@ struct mqtt_if_data* mqtt_vpn_if_init(char *broker, char *user, char *broker_pas
     mqtt_if_set_password(mqtt_if, password);
 
     esp_event_loop_args_t loop_with_task_args = {
-        .queue_size = 5,
+        .queue_size = 33,
         .task_name = "loop_task", // task will be created
         .task_priority = uxTaskPriorityGet(NULL),
         .task_stack_size = 4096,
@@ -213,6 +214,8 @@ struct mqtt_if_data* mqtt_vpn_if_init(char *broker, char *user, char *broker_pas
 
 static err_t mqtt_if_output(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr)
 {
+    ESP_LOGI(TAG, "Incoming BWJ Packet Len: %d", p->len);
+    ESP_LOGI(TAG, "Incoming BWJ Packet Tot: %d", p->tot_len);
     struct mqtt_if_data *if_state = (struct mqtt_if_data *)netif->state;
     struct mqtt_pub_data *pub_data = (struct mqtt_pub_data *)malloc(sizeof(struct mqtt_pub_data));
     if (pub_data == NULL)
@@ -243,19 +246,31 @@ static err_t mqtt_if_output(struct netif *netif, struct pbuf *p, const ip4_addr_
         crypto_secretbox((u_char *)pub_data->data_buf + crypto_secretbox_NONCEBYTES, (u_char *)buf, len + crypto_secretbox_ZEROBYTES, (u_char *)pub_data->data_buf, if_state->key);
         pub_data->data_len = len + crypto_secretbox_NONCEBYTES + crypto_secretbox_ZEROBYTES;
 
-        esp_event_post_to(loop_with_task, MQTTVPN_EVENTS, PACKET_SEND_EVENT, &pub_data, sizeof(&pub_data), portMAX_DELAY);
+        if(esp_event_post_to(loop_with_task, MQTTVPN_EVENTS, PACKET_SEND_EVENT, &pub_data, sizeof(&pub_data), 0) != ESP_OK){
+            ESP_LOGI(TAG, "Event Queue Full, Drop Packet"); 
+            free(pub_data->data_buf);
+            free(pub_data->topic);
+            free(pub_data);
+            //pbuf_free(p);
+        }
     }
     else
     {
         pub_data->data_len = pbuf_copy_partial(p, pub_data->data_buf, 2048, 0);
+        //ESP_LOGI(TAG, "Incoming BWJ Post Packet: %d", sizeof(pub_data));
         //pub_data->data_len = pbuf_copy_partial(p, pub_data->data_buf, sizeof(pub_data->data_buf), 0);
 
         //struct ip_hdr *iph; = (struct ip_hdr *)data->buf;
         //printf("packet %d, buf %x\r\n", len, p);
         //printf("to: " IPSTR " from: " IPSTR " via " IPSTR "\r\n", IP2STR(&iph->dest), IP2STR(&iph->src), IP2STR(ipaddr));
-        ESP_LOGI(TAG, "BWJ PBUF:  %d bytes", pub_data->data_len);
-        ESP_LOGI(TAG, "BWJ PBUF Cont:  %s bytes", pub_data->data_buf);
-        esp_event_post_to(loop_with_task, MQTTVPN_EVENTS, PACKET_SEND_EVENT, &pub_data, sizeof(&pub_data), portMAX_DELAY);
+        // ORIGINAL esp_event_post_to(loop_with_task, MQTTVPN_EVENTS, PACKET_SEND_EVENT, &pub_data, sizeof(pub_data), portMAX_DELAY);
+        if(esp_event_post_to(loop_with_task, MQTTVPN_EVENTS, PACKET_SEND_EVENT, &pub_data, sizeof(pub_data), 0) != ESP_OK){
+            ESP_LOGI(TAG, "Event Queue Full, Drop Packet"); 
+            free(pub_data->data_buf);
+            free(pub_data->topic);
+            free(pub_data);
+            //pbuf_free(p);
+        }
     }
     return ERR_OK;
 }
@@ -267,12 +282,6 @@ void mqtt_if_input(struct mqtt_if_data *data, const char *topic, uint32_t topic_
     buf[topic_len] = '\0';
     struct pbuf *pb;
 
-    ESP_LOGI(TAG, "Received %s - %d bytes", buf, mqtt_data_len);
-    ESP_LOGI(TAG, "topic_len: %d", topic_len);
-    ESP_LOGI(TAG, "calculated  receive topic_len: %d", strlen((const char *)data->receive_topic));
-    ESP_LOGI(TAG, "data->receive_topic: %s", data->receive_topic);
-    ESP_LOGI(TAG, "topic: %s", topic);
-
     uint8_t i=0;
     while (i<data->n_addr && \
         !(topic_len == strlen((const char *)data->addr_topic[i]) && \
@@ -281,9 +290,8 @@ void mqtt_if_input(struct mqtt_if_data *data, const char *topic, uint32_t topic_
         ++i;
     }
 
-    if (i<data->n_addr)
+    if (i<data->n_addr || _subscribeAllTraffic)
       {
-        ESP_LOGI(TAG, "BWJ Made it here");
         if (data->key_set)
         {
             if (mqtt_data_len < crypto_secretbox_NONCEBYTES + crypto_secretbox_ZEROBYTES)
@@ -300,7 +308,6 @@ void mqtt_if_input(struct mqtt_if_data *data, const char *topic, uint32_t topic_
                 ESP_LOGI(TAG, "mqttif decrypt error");
                 return;
             }
-            ESP_LOGI(TAG, "BWJ Made it here too");
             pb = pbuf_alloc(PBUF_LINK, message_len - crypto_secretbox_ZEROBYTES, PBUF_RAM);
             if (pb == NULL)
                 return;
@@ -308,7 +315,6 @@ void mqtt_if_input(struct mqtt_if_data *data, const char *topic, uint32_t topic_
         }
         else
         {
-            ESP_LOGI(TAG, "BWJ unencrypted take");
             pb = pbuf_alloc(PBUF_LINK, mqtt_data_len, PBUF_RAM);
             if (pb == NULL)
                 return;
@@ -317,7 +323,6 @@ void mqtt_if_input(struct mqtt_if_data *data, const char *topic, uint32_t topic_
 
         // Post it to the send handler
         ESP_LOGD(TAG, "Buffer post - len: %d tot_len: %d", pb->len, pb->tot_len);
-
 #if !(MQTTIF_DIRECT_INPUT)
         esp_event_post_to(loop_with_task, MQTTVPN_EVENTS, PACKET_RECEIVED_EVENT, &pb, sizeof(pb), portMAX_DELAY);
 #else
@@ -400,7 +405,8 @@ void mqtt_if_subscribe(struct mqtt_if_data *data)
     for (uint8_t i=0; i<data->n_addr; ++i)
     {
         esp_mqtt_client_subscribe(data->mqttcl, data->addr_topic[i], 0);
-    }    
+    }
+    if(_subscribeAllTraffic) esp_mqtt_client_subscribe(data->mqttcl, "mqttipKC/#", 0);
 
     mqtt_if_set_flag(data, NETIF_FLAG_LINK_UP);
 
@@ -425,7 +431,6 @@ void mqtt_if_set_password(struct mqtt_if_data *data, char *password)
 {
     unsigned char h[crypto_hash_BYTES];
 
-    ESP_LOGI(TAG, "BWJ Password Len: %d", strlen(password));
 
     if (strlen(password) > 0)
     {

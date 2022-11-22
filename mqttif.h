@@ -5,11 +5,11 @@ extern "C" {
 #endif
 #include <lwip/ip.h>
 
-#define MQTTIF_DIRECT_INPUT 0
+#define MQTTIF_DIRECT_INPUT 1
 
 struct mqtt_if_data;
 
-struct mqtt_if_data* mqtt_vpn_if_init(char* broker, char* user, char* broker_password, char* topic_pre, char* password, ip4_addr_t ipaddr, ip4_addr_t netmask, ip4_addr_t gw);
+struct mqtt_if_data* mqtt_vpn_if_init(char* broker, char* user, char* broker_password, char* topic_pre, char* password, ip4_addr_t ipaddr, ip4_addr_t netmask, ip4_addr_t gw, bool subscribeAllTraffic);
 
 void mqtt_if_del(struct mqtt_if_data *data);
 
