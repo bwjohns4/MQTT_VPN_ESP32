@@ -162,10 +162,9 @@ static void packet_send_handler(void* handler_args, esp_event_base_t base, int32
     //printf("End snd: %d\n", xPortGetFreeHeapSize());
 }
 
-struct mqtt_if_data* mqtt_vpn_if_init(char *broker, char *user, char *broker_password, char *topic_pre, char *password, ip4_addr_t ipaddr, ip4_addr_t netmask, ip4_addr_t gw, bool subscribeAllTraffic)
+struct mqtt_if_data* mqtt_vpn_if_init(char *broker, char *user, char *broker_password, char *topic_pre, char *password, ip4_addr_t ipaddr, ip4_addr_t netmask, ip4_addr_t gw)
 {
     ESP_LOGI(TAG, "Init on broker: %s", broker);
-    if(subscribeAllTraffic) _subscribeAllTraffic=true;
     esp_mqtt_client_config_t mqtt_cfg = {
         .uri = broker,
         .event_handle = mqtt_event_handler,
@@ -344,6 +343,20 @@ void mqtt_if_add_reading_topic(struct mqtt_if_data *data, ip4_addr_t addr)
     sprintf(data->addr_topic[data->n_addr], "%s/" IPSTR, (char *)data->topic_pre, IP2STR(&addr));
     data->n_addr++;
   }
+  void mqtt_if_subscribe(struct mqtt_if_data *data);
+}
+
+void mqtt_if_add_wildcard_reading_topic(struct mqtt_if_data *data)
+{
+  // warning : silently discard address registration above N_ADDR_MAX
+  if (data->n_addr<N_ADDR_MAX)
+  {
+    data->addr_topic[data->n_addr] = (char *)malloc(strlen((const char *)data->topic_pre) + 5);
+    sprintf(data->addr_topic[data->n_addr], "%s/#", (char *)data->topic_pre);
+    data->n_addr++;
+  }
+  void mqtt_if_subscribe(struct mqtt_if_data *data);
+  _subscribeAllTraffic = true;
 }
 
 void mqtt_if_flush_reading_topic(struct mqtt_if_data *data)
@@ -406,7 +419,6 @@ void mqtt_if_subscribe(struct mqtt_if_data *data)
     {
         esp_mqtt_client_subscribe(data->mqttcl, data->addr_topic[i], 0);
     }
-    if(_subscribeAllTraffic) esp_mqtt_client_subscribe(data->mqttcl, "mqttipKC/#", 0);
 
     mqtt_if_set_flag(data, NETIF_FLAG_LINK_UP);
 

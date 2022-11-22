@@ -9,7 +9,7 @@ extern "C" {
 
 struct mqtt_if_data;
 
-struct mqtt_if_data* mqtt_vpn_if_init(char* broker, char* user, char* broker_password, char* topic_pre, char* password, ip4_addr_t ipaddr, ip4_addr_t netmask, ip4_addr_t gw, bool subscribeAllTraffic);
+struct mqtt_if_data* mqtt_vpn_if_init(char* broker, char* user, char* broker_password, char* topic_pre, char* password, ip4_addr_t ipaddr, ip4_addr_t netmask, ip4_addr_t gw);
 
 void mqtt_if_del(struct mqtt_if_data *data);
 
@@ -28,6 +28,7 @@ void mqtt_if_clear_flag(struct mqtt_if_data *data, int flag);
 void mqtt_if_clear_dns(void);
 void mqtt_if_add_dns(uint32_t addr);
 void mqtt_if_add_reading_topic(struct mqtt_if_data *data, ip4_addr_t addr);
+void mqtt_if_add_wildcard_reading_topic(struct mqtt_if_data *data);
 void mqtt_if_flush_reading_topic(struct mqtt_if_data *data);
 #ifdef __cplusplus
 }
